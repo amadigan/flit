@@ -1,0 +1,13 @@
+{
+	"name": "Alpine",
+	"build": {
+		"dockerfile": "Dockerfile"
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"golang.Go"
+			]
+		}
+	}
+}
