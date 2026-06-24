@@ -1,13 +1,14 @@
 package gomod
 
 import (
-	"archive/zip"
+	"fmt"
+	"go/build"
 	"io"
+	"path"
 	"regexp"
 	"strings"
 
 	"github.com/amadigan/flit/pkg/extractor"
-	"github.com/google/uuid"
 )
 
 var extraFiles = []struct {
@@ -28,26 +29,26 @@ var extraFiles = []struct {
 
 var hidden = regexp.MustCompile(`(^|/)\.[^/]+`)
 
-func EmitSourceDocuments(zr *zip.Reader, ch chan<- extractor.Document) error {
-	for _, entry := range zr.File {
-		if entry.FileInfo().IsDir() || hidden.MatchString(entry.Name) {
+func (c *Context) EmitSourceDocuments(ms *ModuleSource, ch chan<- extractor.Document) error {
+	for _, entry := range ms.ListEntries() {
+		if entry.IsDir() || hidden.MatchString(entry.Path()) {
 			continue
 		}
 
-		path := entry.Name
-		name := entry.FileInfo().Name()
+		path := entry.Path()
+		name := entry.Name()
 
 		var doc extractor.Document
 		var err error
 
 		if strings.HasSuffix(name, ".go") {
-			if doc, err = buildGoSourceDocument(entry, path); err != nil {
+			if doc, err = c.buildGoSourceDocument(ms, entry); err != nil {
 				return err
 			}
 		} else {
 			for _, extra := range extraFiles {
 				if extra.pattern.MatchString(name) {
-					if doc, err = buildExtraSourceDocument(entry, path, extra.code); err != nil {
+					if doc, err = c.buildExtraSourceDocument(ms, entry, path, extra.code); err != nil {
 						return err
 					}
 					break
@@ -62,11 +63,17 @@ func EmitSourceDocuments(zr *zip.Reader, ch chan<- extractor.Document) error {
 	return nil
 }
 
-func buildGoSourceDocument(entry *zip.File, path string) (extractor.Document, error) {
-	id, err := uuid.NewV7()
-	if err != nil {
-		return nil, err
+func buildParent(ms *ModuleSource, entry ModuleFileEntry) string {
+	dir := path.Dir(entry.Path())
+	if dir == "." {
+		return "package:" + ms.Module().Path + "@" + ms.Module().Version
+	} else {
+		return "package:" + ms.Module().Path + "@" + ms.Module().Version + "/" + dir
 	}
+}
+
+func (c *Context) buildGoSourceDocument(ms *ModuleSource, entry ModuleFileEntry) (extractor.Document, error) {
+	id := fmt.Sprintf("source:%s@%s/%s", ms.Module().Path, ms.Module().Version, entry.Path())
 
 	file, err := entry.Open()
 	if err != nil {
@@ -79,24 +86,44 @@ func buildGoSourceDocument(entry *zip.File, path string) (extractor.Document, er
 		return nil, err
 	}
 
-	doc := &extractor.SourceDocument{
+	content := string(bs)
+
+	platforms := []string{}
+	for _, ctx := range c.BuildContexts {
+		if match, err := matchContext(ctx, ms, entry); err != nil {
+			return nil, err
+		} else if match {
+			platforms = append(platforms, ctx.GOOS+"/"+ctx.GOARCH)
+		}
+	}
+
+	platforms = ms.platformTable.CollapseNames(platforms)
+
+	doc := &SourceDocument{
 		DocumentFields: extractor.DocumentFields{
-			Id:      id.String(),
-			Type:    "source",
-			Path:    path,
-			Content: string(bs),
+			Id:     id,
+			Type:   "source",
+			Parent: buildParent(ms, entry),
 		},
-		Code: "go",
+		Path:      entry.Path(),
+		Symbol:    entry.Name(),
+		Content:   content,
+		Platforms: platforms,
 	}
 
 	return doc, nil
 }
 
-func buildExtraSourceDocument(entry *zip.File, path, code string) (extractor.Document, error) {
-	id, err := uuid.NewV7()
-	if err != nil {
-		return nil, err
-	}
+func matchContext(ctx build.Context, ms *ModuleSource, entry ModuleFileEntry) (bool, error) {
+	ctx.OpenFile = ms.Open
+
+	dir := path.Dir(entry.Path())
+
+	return ctx.MatchFile(dir, entry.Name())
+}
+
+func (c *Context) buildExtraSourceDocument(ms *ModuleSource, entry ModuleFileEntry, path, code string) (extractor.Document, error) {
+	id := fmt.Sprintf("source:%s@%s/%s", ms.Module().Path, ms.Module().Version, entry.Path())
 
 	file, err := entry.Open()
 	if err != nil {
@@ -109,14 +136,17 @@ func buildExtraSourceDocument(entry *zip.File, path, code string) (extractor.Doc
 		return nil, err
 	}
 
-	doc := &extractor.SourceDocument{
+	doc := &SourceDocument{
 		DocumentFields: extractor.DocumentFields{
-			Id:      id.String(),
-			Type:    "source",
-			Path:    path,
-			Content: string(bs),
+			Id:     id,
+			Type:   "source",
+			Parent: buildParent(ms, entry),
 		},
-		Code: code,
+		Path:      path,
+		Symbol:    entry.Name(),
+		Content:   string(bs),
+		Platforms: []string{"all"},
+		Code:      code,
 	}
 
 	return doc, nil
