@@ -1,0 +1,249 @@
+package marshal
+
+import (
+	"fmt"
+	"reflect"
+)
+
+type Writer[T any] interface {
+	WriteStartObject() error
+	WriteEndObject() error
+	WriteStartArray() error
+	WriteEndArray() error
+	WriteNull() error
+	WriteBool(bool) error
+	WriteInt8(int8) error
+	WriteInt16(int16) error
+	WriteInt32(int32) error
+	WriteInt64(int64) error
+	WriteUint8(uint8) error
+	WriteUint16(uint16) error
+	WriteUint32(uint32) error
+	WriteUint64(uint64) error
+	WriteFloat32(float32) error
+	WriteFloat64(float64) error
+	WriteBytes([]byte) error
+	WriteBytesCopy([]byte) error
+	WriteString(string) error
+	WriteValue(value any) (bool, error)
+	WriteField(name string, value any, tag T) (bool, error)
+}
+
+type TagParser[T any] func(string) (T, error)
+
+func StringParser[T ~string]() TagParser[T] {
+	return func(s string) (T, error) {
+		var t T = T(s)
+		return t, nil
+	}
+}
+
+func CachingParser[T any](parser TagParser[T]) TagParser[T] {
+	cache := make(map[string]T)
+
+	return func(s string) (T, error) {
+		if t, ok := cache[s]; ok {
+			return t, nil
+		}
+
+		t, err := parser(s)
+		if err != nil {
+			var zero T
+			return zero, err
+		}
+
+		cache[s] = t
+		return t, nil
+	}
+}
+
+type Marshaler[T any] struct {
+	TagParser TagParser[T]
+	Tag       string
+}
+
+func (m Marshaler[T]) Marshal(w Writer[T], value any) error {
+	write, err := w.WriteValue(value)
+	if !write || err != nil {
+		return err
+	}
+
+	v := reflect.ValueOf(value)
+
+	for v.Kind() == reflect.Pointer {
+		v = v.Elem()
+
+		if write, err = w.WriteValue(v.Interface()); !write || err != nil {
+			return err
+		}
+
+		if v.IsNil() {
+			break
+		}
+	}
+
+	return m.marshalValue(w, v)
+}
+
+func (m Marshaler[T]) marshalValue(w Writer[T], v reflect.Value) error {
+	switch v.Kind() {
+	case reflect.Struct:
+		return m.marshalStruct(w, v)
+	case reflect.Slice, reflect.Array:
+		return m.marshalSlice(w, v)
+	case reflect.Map:
+		return m.marshalMap(w, v)
+	case reflect.Pointer:
+		if v.IsNil() {
+			return w.WriteNull()
+		}
+		return m.marshalValue(w, v.Elem())
+	}
+
+	value := v.Interface()
+
+	switch v.Kind() {
+	case reflect.Bool:
+		return w.WriteBool(value.(bool))
+	case reflect.Int8:
+		return w.WriteInt8(value.(int8))
+	case reflect.Int16:
+		return w.WriteInt16(value.(int16))
+	case reflect.Int32:
+		return w.WriteInt32(value.(int32))
+	case reflect.Int64, reflect.Int:
+		return w.WriteInt64(value.(int64))
+	case reflect.Uint8:
+		return w.WriteUint8(value.(uint8))
+	case reflect.Uint16:
+		return w.WriteUint16(value.(uint16))
+	case reflect.Uint32:
+		return w.WriteUint32(value.(uint32))
+	case reflect.Uint64, reflect.Uint:
+		return w.WriteUint64(value.(uint64))
+	case reflect.Float32:
+		return w.WriteFloat32(value.(float32))
+	case reflect.Float64:
+		return w.WriteFloat64(value.(float64))
+	case reflect.String:
+		return w.WriteString(value.(string))
+	default:
+		if bytes, ok := value.([]byte); ok {
+			return w.WriteBytes(bytes)
+		}
+	}
+
+	return fmt.Errorf("unsupported type: %s", v.Type().String())
+}
+
+func (m Marshaler[T]) marshalField(w Writer[T], name string, tag T, value reflect.Value) error {
+	write, err := w.WriteField(name, value.Interface(), tag)
+	if !write || err != nil {
+		return err
+	}
+
+	for value.Kind() == reflect.Pointer {
+		value = value.Elem()
+
+		if write, err = w.WriteField(name, value.Interface(), tag); !write || err != nil {
+			return err
+		}
+
+		if value.IsNil() {
+			break
+		}
+	}
+
+	return m.marshalValue(w, value)
+}
+
+func (m Marshaler[T]) marshalStruct(w Writer[T], v reflect.Value) error {
+	t := v.Type()
+
+	startedObject := false
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		fieldValue := v.Field(i)
+
+		if !fieldValue.CanInterface() {
+			continue
+		}
+
+		var parsed T
+		var err error
+
+		if m.Tag != "" {
+			parsed, err = m.TagParser(field.Tag.Get(m.Tag))
+		}
+
+		if err != nil {
+			return err
+		}
+
+		if !startedObject {
+			if err := w.WriteStartObject(); err != nil {
+				return err
+			}
+			startedObject = true
+		}
+
+		if err := m.marshalField(w, field.Name, parsed, fieldValue); err != nil {
+			return err
+		}
+	}
+
+	if startedObject {
+		if err := w.WriteEndObject(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m Marshaler[T]) marshalSlice(w Writer[T], v reflect.Value) error {
+	if err := w.WriteStartArray(); err != nil {
+		return err
+	}
+
+	for i := 0; i < v.Len(); i++ {
+		if err := m.Marshal(w, v.Index(i).Interface()); err != nil {
+			return err
+		}
+	}
+
+	if err := w.WriteEndArray(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (m Marshaler[T]) marshalMap(w Writer[T], v reflect.Value) error {
+	if err := w.WriteStartObject(); err != nil {
+		return err
+	}
+
+	var emptyTag T
+
+	for _, key := range v.MapKeys() {
+		value := v.MapIndex(key)
+
+		if write, err := w.WriteField(key.String(), value.Interface(), emptyTag); err != nil {
+			return err
+		} else if !write {
+			continue
+		}
+
+		if err := m.marshalValue(w, value); err != nil {
+			return err
+		}
+	}
+
+	if err := w.WriteEndObject(); err != nil {
+		return err
+	}
+
+	return nil
+}
