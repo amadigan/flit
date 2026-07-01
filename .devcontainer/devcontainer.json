@@ -1,12 +1,12 @@
 {
-	"name": "Alpine",
-	"build": {
-		"dockerfile": "Dockerfile"
+	"name": "alpine-go",
+	"image": "mcr.microsoft.com/devcontainers/base:alpine",
+	"features": {
+		"ghcr.io/amadigan/dev-containers/go-direct:latest": {}
 	},
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"golang.Go",
 				"ms-vscode.hexeditor"
 			],
 			"settings": {

@@ -1,0 +1,9 @@
+{
+  "features": {
+    "ghcr.io/amadigan/dev-containers/go-direct:latest": {
+      "version": "1.0.0",
+      "resolved": "ghcr.io/amadigan/dev-containers/go-direct@sha256:f59ff4baf22bd209663ca3d6df061e495c9d5aeff77cce8b839efb89b2b0c3a6",
+      "integrity": "sha256:f59ff4baf22bd209663ca3d6df061e495c9d5aeff77cce8b839efb89b2b0c3a6"
+    }
+  }
+}
