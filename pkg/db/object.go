@@ -107,7 +107,7 @@ func (vh *ValueHeader) parse(r io.Reader, buf []byte) (int, error) {
 		}
 	case 0x04:
 		vh.typ = TypeFloat
-		vh.len = uint32(buf[0] >> 3 & 0x08)
+		vh.len = uint32(buf[0]>>3) & 0x07
 
 		if vh.len == 0 {
 			vh.literal = true
@@ -129,6 +129,9 @@ func (vh *ValueHeader) parse(r io.Reader, buf []byte) (int, error) {
 		}
 		vh.typ = TypeObject
 		vh.len = vlen
+		if vh.len == 0 {
+			vh.literal = true
+		}
 	case 0x07:
 		vlen, n, err := parseLength(r, buf[0], buf)
 		read += n
