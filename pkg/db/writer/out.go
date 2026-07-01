@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"math"
 
 	"github.com/amadigan/flit/pkg/db"
@@ -25,11 +26,11 @@ func (f Field) writeField(w io.ByteWriter) error {
 		w.WriteByte(uint8((f.len >> 8) & 0xFF))
 		w.WriteByte(uint8(f.len & 0xFF))
 	} else if f.len > 0x3FF {
-		w.WriteByte(f.typ | 0xA0 | (uint8(f.len>>13) & 0x38))
+		w.WriteByte(f.typ | 0xA0 | (uint8(f.len>>13) & 0x18))
 		w.WriteByte(uint8(f.len >> 8))
 		w.WriteByte(uint8(f.len & 0xFF))
 	} else if f.len > 0xF {
-		w.WriteByte(f.typ | 0x80 | (uint8(f.len>>5) & 0x38))
+		w.WriteByte(f.typ | 0x80 | (uint8(f.len>>5) & 0x18))
 		w.WriteByte(uint8(f.len & 0xFF))
 	} else {
 		w.WriteByte(f.typ | (uint8(f.len) << 3))
@@ -51,6 +52,7 @@ func BuildObject(keys map[string]uint8, fields []Field) ([][]byte, int, error) {
 			return nil, 0, fmt.Errorf("field name %q exceeds maximum length of %d", field.name, MaxNameLength)
 		} else {
 			nameLen := len(field.name)
+			log.Printf("writing field %q with name length %d and content length %d", field.name, nameLen, field.len)
 			if nameLen > 0x3F {
 				hdrWriter.WriteByte(0x40 | uint8(nameLen>>8))
 				hdrWriter.WriteByte(uint8(nameLen & 0xFF))
@@ -179,7 +181,7 @@ func NewInt16Field(name string, value int16) Field {
 		f.content = [][]byte{{byte(value)}}
 		f.len = 1
 	} else {
-		f.content = [][]byte{[]byte{byte(value >> 8), byte(value & 0xFF)}}
+		f.content = [][]byte{{byte(value >> 8), byte(value & 0xFF)}}
 		f.len = 2
 	}
 
@@ -202,13 +204,13 @@ func NewInt32Field(name string, value int32) Field {
 		f.content = [][]byte{{byte(value)}}
 		f.len = 1
 	} else if value <= 0xFFFF {
-		f.content = [][]byte{[]byte{byte(value >> 8), byte(value & 0xFF)}}
+		f.content = [][]byte{{byte(value >> 8), byte(value & 0xFF)}}
 		f.len = 2
 	} else if value <= 0xFFFFFF {
-		f.content = [][]byte{[]byte{byte(value >> 16), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}
+		f.content = [][]byte{{byte(value >> 16), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}
 		f.len = 3
 	} else {
-		f.content = [][]byte{[]byte{byte(value >> 24), byte((value >> 16) & 0xFF), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}
+		f.content = [][]byte{{byte(value >> 24), byte((value >> 16) & 0xFF), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}
 		f.len = 4
 	}
 
@@ -231,19 +233,19 @@ func NewInt64Field(name string, value int64) Field {
 		f.content = [][]byte{{byte(value)}}
 		f.len = 1
 	} else if value <= 0xFFFF {
-		f.content = [][]byte{[]byte{byte(value >> 8), byte(value & 0xFF)}}
+		f.content = [][]byte{{byte(value >> 8), byte(value & 0xFF)}}
 		f.len = 2
 	} else if value <= 0xFFFFFF {
-		f.content = [][]byte{[]byte{byte(value >> 16), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}
+		f.content = [][]byte{{byte(value >> 16), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}
 		f.len = 3
 	} else if value <= 0xFFFFFFFF {
-		f.content = [][]byte{[]byte{byte(value >> 24), byte((value >> 16) & 0xFF), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}
+		f.content = [][]byte{{byte(value >> 24), byte((value >> 16) & 0xFF), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}
 		f.len = 4
 	} else if value <= 0xFFFFFFFFFFFF {
-		f.content = [][]byte{[]byte{byte(value >> 40), byte((value >> 32) & 0xFF), byte((value >> 24) & 0xFF), byte((value >> 16) & 0xFF), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}
+		f.content = [][]byte{{byte(value >> 40), byte((value >> 32) & 0xFF), byte((value >> 24) & 0xFF), byte((value >> 16) & 0xFF), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}
 		f.len = 5 // 6 byte integer lengths are mapped to a value of 5
 	} else {
-		f.content = [][]byte{[]byte{byte(value >> 56), byte((value >> 48) & 0xFF), byte((value >> 40) & 0xFF), byte((value >> 32) & 0xFF), byte((value >> 24) & 0xFF), byte((value >> 16) & 0xFF), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}
+		f.content = [][]byte{{byte(value >> 56), byte((value >> 48) & 0xFF), byte((value >> 40) & 0xFF), byte((value >> 32) & 0xFF), byte((value >> 24) & 0xFF), byte((value >> 16) & 0xFF), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}
 		f.len = 6 // 8 byte integer lengths are mapped to a value of 6
 	}
 
@@ -258,7 +260,7 @@ func NewUint16Field(name string, value uint16) Field {
 	if value <= 0xFF {
 		return Field{name: name, typ: uint8(db.TypeInt), content: [][]byte{{byte(value)}}, len: 1}
 	} else {
-		return Field{name: name, typ: uint8(db.TypeInt), content: [][]byte{[]byte{byte(value >> 8), byte(value & 0xFF)}}, len: 2}
+		return Field{name: name, typ: uint8(db.TypeInt), content: [][]byte{{byte(value >> 8), byte(value & 0xFF)}}, len: 2}
 	}
 }
 
@@ -266,11 +268,11 @@ func NewUint32Field(name string, value uint32) Field {
 	if value <= 0xFF {
 		return Field{name: name, typ: uint8(db.TypeInt), content: [][]byte{{byte(value)}}, len: 1}
 	} else if value <= 0xFFFF {
-		return Field{name: name, typ: uint8(db.TypeInt), content: [][]byte{[]byte{byte(value >> 8), byte(value & 0xFF)}}, len: 2}
+		return Field{name: name, typ: uint8(db.TypeInt), content: [][]byte{{byte(value >> 8), byte(value & 0xFF)}}, len: 2}
 	} else if value <= 0xFFFFFF {
-		return Field{name: name, typ: uint8(db.TypeInt), content: [][]byte{[]byte{byte(value >> 16), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}, len: 3}
+		return Field{name: name, typ: uint8(db.TypeInt), content: [][]byte{{byte(value >> 16), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}, len: 3}
 	} else {
-		return Field{name: name, typ: uint8(db.TypeInt), content: [][]byte{[]byte{byte(value >> 24), byte((value >> 16) & 0xFF), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}, len: 4}
+		return Field{name: name, typ: uint8(db.TypeInt), content: [][]byte{{byte(value >> 24), byte((value >> 16) & 0xFF), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}, len: 4}
 	}
 }
 
@@ -278,7 +280,7 @@ func NewUint64Field(name string, value uint64) Field {
 	if value > 0x7FFFFFFFFFFFFFFF {
 		f := Field{name: name, typ: uint8(db.TypeInt)}
 		f.len = 6
-		f.content = [][]byte{[]byte{byte(value >> 56), byte((value >> 48) & 0xFF), byte((value >> 40) & 0xFF), byte((value >> 32) & 0xFF), byte((value >> 24) & 0xFF), byte((value >> 16) & 0xFF), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}
+		f.content = [][]byte{{byte(value >> 56), byte((value >> 48) & 0xFF), byte((value >> 40) & 0xFF), byte((value >> 32) & 0xFF), byte((value >> 24) & 0xFF), byte((value >> 16) & 0xFF), byte((value >> 8) & 0xFF), byte(value & 0xFF)}}
 		return f
 	}
 	return NewInt64Field(name, int64(value))
@@ -291,7 +293,7 @@ func NewFloat32Field(name string, value float32) Field {
 	}
 
 	bits := math.Float32bits(value)
-	f.content = [][]byte{[]byte{byte(bits >> 24), byte((bits >> 16) & 0xFF), byte((bits >> 8) & 0xFF), byte(bits & 0xFF)}}
+	f.content = [][]byte{{byte(bits >> 24), byte((bits >> 16) & 0xFF), byte((bits >> 8) & 0xFF), byte(bits & 0xFF)}}
 	f.len = 4
 
 	return f
@@ -304,7 +306,7 @@ func NewFloat64Field(name string, value float64) Field {
 	}
 
 	bits := math.Float64bits(value)
-	f.content = [][]byte{[]byte{byte(bits >> 56), byte((bits >> 48) & 0xFF), byte((bits >> 40) & 0xFF), byte((bits >> 32) & 0xFF), byte((bits >> 24) & 0xFF), byte((bits >> 16) & 0xFF), byte((bits >> 8) & 0xFF), byte(bits & 0xFF)}}
+	f.content = [][]byte{{byte(bits >> 56), byte((bits >> 48) & 0xFF), byte((bits >> 40) & 0xFF), byte((bits >> 32) & 0xFF), byte((bits >> 24) & 0xFF), byte((bits >> 16) & 0xFF), byte((bits >> 8) & 0xFF), byte(bits & 0xFF)}}
 	f.len = 6
 
 	return f

@@ -23,6 +23,28 @@
 			"args": [
 				"${workspaceFolder}/local/db"
 			]
+		},
+		{
+			"name": "artifactread",
+			"type": "go",
+			"request": "launch",
+			"mode": "auto",
+			"program": "${workspaceFolder}/tools/artifactread",
+			"args": [
+				"${workspaceFolder}/local/uuid"
+			]
+		},
+		{
+			"name": "goartifact",
+			"type": "go",
+			"request": "launch",
+			"mode": "auto",
+			"program": "${workspaceFolder}/tools/goartifact",
+			"args": [
+				"github.com/google/uuid",
+				"v1.6.0",
+				"${workspaceFolder}/local/uuid"
+			]
 		}
 	]
 }

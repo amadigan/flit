@@ -71,14 +71,14 @@ func (m Marshaler[T]) Marshal(w Writer[T], value any) error {
 	v := reflect.ValueOf(value)
 
 	for v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			break
+		}
+
 		v = v.Elem()
 
 		if write, err = w.WriteValue(v.Interface()); !write || err != nil {
 			return err
-		}
-
-		if v.IsNil() {
-			break
 		}
 	}
 
@@ -111,16 +111,20 @@ func (m Marshaler[T]) marshalValue(w Writer[T], v reflect.Value) error {
 		return w.WriteInt16(value.(int16))
 	case reflect.Int32:
 		return w.WriteInt32(value.(int32))
-	case reflect.Int64, reflect.Int:
+	case reflect.Int64:
 		return w.WriteInt64(value.(int64))
+	case reflect.Int:
+		return w.WriteInt64(int64(value.(int)))
 	case reflect.Uint8:
 		return w.WriteUint8(value.(uint8))
 	case reflect.Uint16:
 		return w.WriteUint16(value.(uint16))
 	case reflect.Uint32:
 		return w.WriteUint32(value.(uint32))
-	case reflect.Uint64, reflect.Uint:
+	case reflect.Uint64:
 		return w.WriteUint64(value.(uint64))
+	case reflect.Uint:
+		return w.WriteUint64(uint64(value.(uint)))
 	case reflect.Float32:
 		return w.WriteFloat32(value.(float32))
 	case reflect.Float64:
@@ -143,14 +147,14 @@ func (m Marshaler[T]) marshalField(w Writer[T], name string, tag T, value reflec
 	}
 
 	for value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			break
+		}
+
 		value = value.Elem()
 
 		if write, err = w.WriteField(name, value.Interface(), tag); !write || err != nil {
 			return err
-		}
-
-		if value.IsNil() {
-			break
 		}
 	}
 

@@ -3,7 +3,7 @@ package extractor
 import "github.com/amadigan/flit/pkg/schema"
 
 type Document interface {
-	Fields() DocumentFields
+	DocFields() DocumentFields
 }
 
 type DocumentFields struct {
@@ -14,7 +14,7 @@ type DocumentFields struct {
 	Order     int64  `json:"order,omitempty"`
 }
 
-func (d DocumentFields) Fields() DocumentFields {
+func (d DocumentFields) DocFields() DocumentFields {
 	return d
 }
 
@@ -28,11 +28,22 @@ type RootDocument struct {
 	Types      map[string]schema.Type  `json:"types,omitempty"`
 }
 
+func (r RootDocument) DocFields() DocumentFields {
+	return r.DocumentFields
+}
+
 type EndDocument struct {
 	Id       string              `json:"id"`
 	Type     string              `json:"type"`
 	Warnings map[string][]string `json:"warnings,omitempty"`
 	Errors   map[string][]string `json:"errors,omitempty"`
+}
+
+func (e EndDocument) DocFields() DocumentFields {
+	return DocumentFields{
+		Id:   e.Id,
+		Type: e.Type,
+	}
 }
 
 type Ref struct {

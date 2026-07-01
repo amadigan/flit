@@ -1,6 +1,10 @@
 package db
 
-import "io"
+import (
+	"fmt"
+	"io"
+	"log"
+)
 
 var intLengthMap = []uint32{0, 1, 2, 3, 4, 6, 8}
 
@@ -20,17 +24,17 @@ func parseLength(r io.Reader, typ uint8, buf []byte) (uint32, int, error) {
 
 		switch vlen {
 		case 3:
-			return uint32((uint32(typ)&0x60)<<21 | uint32(buf[0])<<16 | uint32(buf[1])<<8 | uint32(buf[2])), vlen, nil
+			return uint32((uint32(typ)&0x18)<<21 | uint32(buf[0])<<16 | uint32(buf[1])<<8 | uint32(buf[2])), vlen, nil
 		case 2:
-			return uint32((uint32(typ)&0x60)<<13 | uint32(buf[0])<<8 | uint32(buf[1])), vlen, nil
+			return uint32((uint32(typ)&0x18)<<13 | uint32(buf[0])<<8 | uint32(buf[1])), vlen, nil
 		case 1:
-			return uint32((uint32(typ)&0x60)<<5 | uint32(buf[0])), vlen, nil
+			return uint32((uint32(typ)&0x18)<<5 | uint32(buf[0])), vlen, nil
 		default:
 			return 0, vlen, ErrMalformedData
 		}
 	}
 
-	return uint32(typ&0x70) >> 3, 0, nil
+	return uint32(typ&0x78) >> 3, 0, nil
 }
 
 func parseArrayHeader(r io.Reader) ([]ValueHeader, int, error) {
@@ -39,7 +43,7 @@ func parseArrayHeader(r io.Reader) ([]ValueHeader, int, error) {
 	read := 0
 	offset := 0
 
-	for i := 0; headers[i].typ != Type(EndOfObject); i++ {
+	for i := 0; ; i++ {
 		headers = append(headers, ValueHeader{})
 
 		if n, err := headers[i].parse(r, buf); err != nil {
@@ -51,6 +55,10 @@ func parseArrayHeader(r io.Reader) ([]ValueHeader, int, error) {
 		headers[i].predefined = EmptyKey
 		headers[i].off = uint32(offset)
 		offset += int(headers[i].len)
+
+		if headers[i].typ == Type(EndOfObject) {
+			break
+		}
 	}
 
 	headers = headers[:len(headers)-1]
@@ -109,7 +117,7 @@ func (vh *ValueHeader) parse(r io.Reader, buf []byte) (int, error) {
 		vlen, n, err := parseLength(r, buf[0], buf)
 		read += n
 		if err != nil {
-			return read, err
+			return read, fmt.Errorf("failed to parse string length: %w", err)
 		}
 		vh.typ = TypeString
 		vh.len = vlen
@@ -117,7 +125,7 @@ func (vh *ValueHeader) parse(r io.Reader, buf []byte) (int, error) {
 		vlen, n, err := parseLength(r, buf[0], buf)
 		read += n
 		if err != nil {
-			return read, err
+			return read, fmt.Errorf("failed to parse object length: %w", err)
 		}
 		vh.typ = TypeObject
 		vh.len = vlen
@@ -125,12 +133,12 @@ func (vh *ValueHeader) parse(r io.Reader, buf []byte) (int, error) {
 		vlen, n, err := parseLength(r, buf[0], buf)
 		read += n
 		if err != nil {
-			return read, err
+			return read, fmt.Errorf("failed to parse array length: %w", err)
 		}
 		vh.typ = TypeArray
 		vh.len = vlen
 	default:
-		return read, ErrMalformedData
+		return read, fmt.Errorf("unsupported field type: %v", buf[0]&0x07)
 	}
 
 	return read, nil
@@ -144,12 +152,14 @@ func parseObjectHeader(r io.Reader) ([]ValueHeader, int, error) {
 
 	for {
 		if c, err := r.Read(buf[:1]); err != nil {
-			return nil, read, err
+			return nil, read, fmt.Errorf("failed to read field header: %w", err)
 		} else if c == 0 {
 			return nil, read, ErrTruncatedData
 		} else {
 			read += c
 		}
+
+		orig := buf[0]
 
 		if buf[0] == EndOfObject {
 			break
@@ -161,16 +171,21 @@ func parseObjectHeader(r io.Reader) ([]ValueHeader, int, error) {
 		} else if buf[0]&0x40 != 0 {
 			fh.nameOff = uint32(offset)
 			if c, err := r.Read(buf[1:2]); err != nil {
-				return nil, read, err
+				return nil, read, fmt.Errorf("failed to read extended name length for field: %w", err)
 			} else if c == 0 {
 				return nil, read, ErrTruncatedData
 			} else {
 				read += c
 			}
 
-			fh.nameLen = uint32(buf[0]&0x3F)<<8 | uint32(buf[1])
+			fh.nameLen = (uint32(buf[0]&0x3F) << 8) | uint32(buf[1])
 		} else {
+			fh.nameOff = uint32(offset)
 			fh.nameLen = uint32(buf[0] & 0x3F)
+		}
+
+		if fh.nameLen > 1000 {
+			log.Printf("Warning: field name length %d exceeds 1000 bytes, which may indicate malformed data", fh.nameLen)
 		}
 
 		offset += int(fh.nameLen)
@@ -178,15 +193,16 @@ func parseObjectHeader(r io.Reader) ([]ValueHeader, int, error) {
 		n, err := fh.parse(r, buf)
 		read += n
 		if err != nil {
-			return nil, read, err
+			return nil, read, fmt.Errorf("failed to parse field header: %w", err)
 		}
 		if fh.typ == Type(EndOfObject) {
-			return nil, read, ErrMalformedData
+			return nil, read, fmt.Errorf("unexpected end of object while parsing field header")
 		}
 
 		fh.off = uint32(offset)
 		offset += int(fh.len)
 
+		log.Printf("Parsed field header: predefined=%d, nameOff=%d, nameLen=%d, typ=%v, off=%d, len=%d for input byte 0x%02X", fh.predefined, fh.nameOff, fh.nameLen, fh.typ, fh.off, fh.len, orig)
 		headers = append(headers, fh)
 	}
 	return headers, read, nil
@@ -259,7 +275,7 @@ func (or *objectReader) Scalar(field int) (ValueParser, error) {
 
 		ibs := make([]byte, fh.len)
 		if _, err := io.ReadFull(or.reader, ibs); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to read int bytes for field %d: %w", field, err)
 		}
 
 		return intParser{
@@ -273,7 +289,7 @@ func (or *objectReader) Scalar(field int) (ValueParser, error) {
 
 		fbs := make([]byte, fh.len)
 		if _, err := io.ReadFull(or.reader, fbs); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to read float bytes for field %d: %w", field, err)
 		}
 
 		return floatParser{value: fbs}, nil
@@ -287,14 +303,14 @@ func (or *objectReader) Scalar(field int) (ValueParser, error) {
 			length: fh.len,
 		}, nil
 	default:
-		return nil, ErrMalformedData
+		return nil, fmt.Errorf("unsupported field type: %v", fh.typ)
 	}
 }
 
 func (or *objectReader) ObjectHeader(field int) ([]ValueHeader, error) {
 	fh := or.headers[field]
 	if fh.typ != TypeObject && fh.typ != TypeArray {
-		return nil, ErrMalformedData
+		return nil, fmt.Errorf("unsupported field type: %v", fh.typ)
 	}
 
 	if fh.literal {
@@ -320,7 +336,7 @@ func (or *objectReader) ObjectHeader(field int) ([]ValueHeader, error) {
 	}
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse headers for field %d: %w", field, err)
 	}
 
 	or.headers[field].hdrLen = uint32(read)
@@ -332,7 +348,7 @@ func (or *objectReader) ObjectHeader(field int) ([]ValueHeader, error) {
 func (or *objectReader) Object(field int) (ValueCursor, error) {
 	fh := or.headers[field]
 	if fh.typ != TypeObject && fh.typ != TypeArray {
-		return nil, ErrMalformedData
+		return nil, fmt.Errorf("unsupported field type: %v", fh.typ)
 	}
 
 	if fh.literal {

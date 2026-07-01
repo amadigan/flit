@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"log"
 	"reflect"
 	"strings"
 )
@@ -26,15 +27,21 @@ func Unmarshal(cursor ValueCursor, headers []ValueHeader, v any, extraFields ...
 		value = value.Elem()
 	}
 
+	if value.Kind() == reflect.Interface && value.NumMethod() == 0 {
+		m := make(map[string]any)
+		value.Set(reflect.ValueOf(m))
+		value = value.Elem()
+	}
+
 	if value.Kind() == reflect.Map {
 		if err := unmarshalToMap(cursor, headers, value); err != nil {
-			return err
+			return fmt.Errorf("failed to unmarshal to map: %w", err)
 		}
 
 		for _, extra := range extraFields {
 			val, err := extra.Value.As(value.Type().Elem())
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to unmarshal extra field %q: %w", extra.Name, err)
 			}
 
 			value.SetMapIndex(reflect.ValueOf(extra.Name), val)
@@ -50,7 +57,7 @@ func Unmarshal(cursor ValueCursor, headers []ValueHeader, v any, extraFields ...
 		for i, header := range headers {
 			name, err := cursor.Name(i)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to get name for header %d: %w", i, err)
 			}
 			namedHeaders[strings.ToLower(name)] = namedHeader{index: i, header: header}
 		}
@@ -87,7 +94,7 @@ func Unmarshal(cursor ValueCursor, headers []ValueHeader, v any, extraFields ...
 					fieldValue := value.Field(i)
 					val, err := scalar.As(fieldValue.Type())
 					if err != nil {
-						return err
+						return fmt.Errorf("failed to unmarshal extra field %q: %w", name, err)
 					}
 					fieldValue.Set(val)
 				}
@@ -98,48 +105,48 @@ func Unmarshal(cursor ValueCursor, headers []ValueHeader, v any, extraFields ...
 			fieldValue := value.Field(i)
 			switch header.header.typ {
 			case TypeObject:
-				headers, err := cursor.ObjectHeader(header.index)
+				subheaders, err := cursor.ObjectHeader(header.index)
 				if err != nil {
-					return err
+					return fmt.Errorf("failed to get object header for field %q: %w", field.Name, err)
 				}
 
 				objCursor, err := cursor.Object(header.index)
 				if err != nil {
-					return err
+					return fmt.Errorf("failed to get object cursor for field %q: %w", field.Name, err)
 				}
 
 				obj := reflect.New(fieldValue.Type()).Interface()
-				if err := Unmarshal(objCursor, headers, obj); err != nil {
-					return err
+				if err := Unmarshal(objCursor, subheaders, obj); err != nil {
+					return fmt.Errorf("failed to unmarshal object for field %q: %w", field.Name, err)
 				}
 
 				fieldValue.Set(reflect.ValueOf(obj).Elem())
 			case TypeArray:
-				headers, err := cursor.ObjectHeader(header.index)
+				arrHeaders, err := cursor.ObjectHeader(header.index)
 				if err != nil {
-					return err
+					return fmt.Errorf("failed to get array header for field %q: %w", field.Name, err)
 				}
 
 				arrCursor, err := cursor.Object(header.index)
 				if err != nil {
-					return err
+					return fmt.Errorf("failed to get array cursor for field %q: %w", field.Name, err)
 				}
 
 				arr := reflect.New(fieldValue.Type())
-				if err := unmarshalToSlice(arrCursor, headers, arr); err != nil {
-					return err
+				if err := unmarshalToSlice(arrCursor, arrHeaders, arr); err != nil {
+					return fmt.Errorf("failed to unmarshal array for field %q: %w", field.Name, err)
 				}
 
 				fieldValue.Set(reflect.ValueOf(arr).Elem())
 			default:
 				parser, err := cursor.Scalar(header.index)
 				if err != nil {
-					return err
+					return fmt.Errorf("failed to get scalar for field %q: %w", field.Name, err)
 				}
 
 				val, err := parser.As(fieldValue.Type())
 				if err != nil {
-					return err
+					return fmt.Errorf("failed to convert scalar for field %q: %w", field.Name, err)
 				}
 				fieldValue.Set(val)
 			}
@@ -168,7 +175,7 @@ func unmarshalToMap(cursor ValueCursor, headers []ValueHeader, v reflect.Value) 
 
 		switch header.typ {
 		case TypeObject:
-			headers, err := cursor.ObjectHeader(i)
+			subheaders, err := cursor.ObjectHeader(i)
 			if err != nil {
 				return err
 			}
@@ -179,13 +186,15 @@ func unmarshalToMap(cursor ValueCursor, headers []ValueHeader, v reflect.Value) 
 			}
 
 			obj := reflect.New(v.Type().Elem()).Interface()
-			if err := Unmarshal(objCursor, headers, obj); err != nil {
+			if err := Unmarshal(objCursor, subheaders, obj); err != nil {
 				return err
 			}
 
+			log.Printf("unmarshaled object for key %q: %+v", name, obj)
+
 			v.SetMapIndex(reflect.ValueOf(name), reflect.ValueOf(obj).Elem())
 		case TypeArray:
-			headers, err := cursor.ObjectHeader(i)
+			arrHeaders, err := cursor.ObjectHeader(i)
 			if err != nil {
 				return err
 			}
@@ -195,12 +204,22 @@ func unmarshalToMap(cursor ValueCursor, headers []ValueHeader, v reflect.Value) 
 				return err
 			}
 
-			arr := reflect.New(v.Type().Elem())
-			if err := unmarshalToSlice(arrCursor, headers, arr); err != nil {
-				return err
+			elemType := v.Type().Elem()
+			var arr reflect.Value
+
+			if elemType.Kind() == reflect.Slice {
+				arr = reflect.New(elemType)
+			} else if elemType.Kind() == reflect.Interface && elemType.NumMethod() == 0 {
+				arr = reflect.New(reflect.TypeOf([]any{}))
+			} else {
+				return fmt.Errorf("unsupported array destination type %s for key %q", elemType.String(), name)
 			}
 
-			v.SetMapIndex(reflect.ValueOf(name), reflect.ValueOf(arr).Elem())
+			if err := unmarshalToSlice(arrCursor, arrHeaders, arr); err != nil {
+				return fmt.Errorf("failed to unmarshal array for key %q to type %s: %w", name, v.Type().String(), err)
+			}
+
+			v.SetMapIndex(reflect.ValueOf(name), arr.Elem())
 		default:
 			parser, err := cursor.Scalar(i)
 			if err != nil {
@@ -220,10 +239,21 @@ func unmarshalToMap(cursor ValueCursor, headers []ValueHeader, v reflect.Value) 
 }
 
 func unmarshalToSlice(cursor ValueCursor, headers []ValueHeader, v reflect.Value) error {
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			v.Set(reflect.New(v.Type().Elem()))
+		}
+		v = v.Elem()
+	}
+
+	if v.Kind() != reflect.Slice {
+		return fmt.Errorf("invalid value type: %s", v.Kind().String())
+	}
+
 	for i, header := range headers {
 		switch header.typ {
 		case TypeObject:
-			headers, err := cursor.ObjectHeader(i)
+			subheaders, err := cursor.ObjectHeader(i)
 			if err != nil {
 				return err
 			}
@@ -234,13 +264,13 @@ func unmarshalToSlice(cursor ValueCursor, headers []ValueHeader, v reflect.Value
 			}
 
 			obj := reflect.New(v.Type().Elem()).Interface()
-			if err := Unmarshal(objCursor, headers, obj); err != nil {
+			if err := Unmarshal(objCursor, subheaders, obj); err != nil {
 				return err
 			}
 
 			v.Set(reflect.Append(v, reflect.ValueOf(obj).Elem()))
 		case TypeArray:
-			headers, err := cursor.ObjectHeader(i)
+			arrHeaders, err := cursor.ObjectHeader(i)
 			if err != nil {
 				return err
 			}
@@ -250,12 +280,17 @@ func unmarshalToSlice(cursor ValueCursor, headers []ValueHeader, v reflect.Value
 				return err
 			}
 
-			arr := reflect.New(v.Type().Elem())
-			if err := unmarshalToSlice(arrCursor, headers, arr); err != nil {
+			var arr reflect.Value
+			if v.Type().Elem().Kind() == reflect.Interface && v.Type().Elem().NumMethod() == 0 {
+				arr = reflect.New(reflect.TypeOf([]any{}))
+			} else {
+				arr = reflect.New(v.Type().Elem())
+			}
+			if err := unmarshalToSlice(arrCursor, arrHeaders, arr); err != nil {
 				return err
 			}
 
-			v.Set(reflect.Append(v, reflect.ValueOf(arr).Elem()))
+			v.Set(reflect.Append(v, arr.Elem()))
 		default:
 			parser, err := cursor.Scalar(i)
 			if err != nil {
@@ -346,7 +381,7 @@ func UnmarshalArray(cursor ValueCursor, headers []ValueHeader) (any, error) {
 	for i, header := range headers {
 		switch header.typ {
 		case TypeObject:
-			headers, err := cursor.ObjectHeader(i)
+			subheaders, err := cursor.ObjectHeader(i)
 			if err != nil {
 				return nil, err
 			}
@@ -356,14 +391,14 @@ func UnmarshalArray(cursor ValueCursor, headers []ValueHeader) (any, error) {
 				return nil, err
 			}
 
-			obj, err := UnmarshalMap(objCursor, headers)
+			obj, err := UnmarshalMap(objCursor, subheaders)
 			if err != nil {
 				return nil, err
 			}
 
 			result[i] = obj
 		case TypeArray:
-			headers, err := cursor.ObjectHeader(i)
+			arrHeaders, err := cursor.ObjectHeader(i)
 			if err != nil {
 				return nil, err
 			}
@@ -373,7 +408,7 @@ func UnmarshalArray(cursor ValueCursor, headers []ValueHeader) (any, error) {
 				return nil, err
 			}
 
-			arr, err := UnmarshalArray(arrCursor, headers)
+			arr, err := UnmarshalArray(arrCursor, arrHeaders)
 			if err != nil {
 				return nil, err
 			}

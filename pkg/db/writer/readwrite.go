@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"sort"
 	"sync"
@@ -56,15 +57,16 @@ func OpenReadWriteDB(file *os.File, id uuid.UUID) (*ReadWriteDB, error) {
 
 	stat, err := file.Stat()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to stat file %s: %w", file.Name(), err)
 	}
 
 	header := make([]byte, rwHeaderLength)
 
 	if stat.Size() == 0 {
+		// new file
 		copy(header, ReadWriteFormat[:])
 		if _, err := file.WriteAt(header, 0); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to write header to file %s: %w", file.Name(), err)
 		}
 
 		database.id = id
@@ -74,11 +76,11 @@ func OpenReadWriteDB(file *os.File, id uuid.UUID) (*ReadWriteDB, error) {
 	}
 
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to seek to start of file %s: %w", file.Name(), err)
 	}
 
 	if _, err := io.ReadFull(file, header); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read header from file %s: %w", file.Name(), err)
 	}
 
 	formatId := uuid.UUID{}
@@ -96,12 +98,12 @@ func OpenReadWriteDB(file *os.File, id uuid.UUID) (*ReadWriteDB, error) {
 	dbinfo := &db.DBInfo{Keys: rwFooterKeys}
 	cursor, headers, err := db.ReadObject(dbinfo, file, stat.Size()-int64(footerLength))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read footer from file %s: %w", file.Name(), err)
 	}
 
 	var footer readWriteFooter
 	if err := db.Unmarshal(cursor, headers, &footer); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to unmarshal footer from file %s: %w", file.Name(), err)
 	}
 
 	database.id = footer.DatabaseId
@@ -118,6 +120,7 @@ func (db *ReadWriteDB) Terminate() error {
 }
 
 func (db *ReadWriteDB) Close() error {
+	log.Printf("Closing database %s with %d documents", db.id, len(db.documents))
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 	footer := readWriteFooter{
@@ -207,10 +210,7 @@ func (db *ReadWriteDB) openDocument(id string) *io.SectionReader {
 	return io.NewSectionReader(db.file, doc.Start, int64(doc.Length))
 }
 
-func (db *ReadWriteDB) DeleteDocument(id string) {
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
-
+func (db *ReadWriteDB) deleteDocument(id string) {
 	doc, exists := db.documents[id]
 	if !exists {
 		return
@@ -223,6 +223,13 @@ func (db *ReadWriteDB) DeleteDocument(id string) {
 	}
 
 	delete(db.documents, id)
+}
+
+func (db *ReadWriteDB) DeleteDocument(id string) {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
+	db.deleteDocument(id)
 }
 
 func (db *ReadWriteDB) WriteDocumentParts(id string, data [][]byte, length int) error {
@@ -259,7 +266,7 @@ func (db *ReadWriteDB) WriteDocumentParts(id string, data [][]byte, length int) 
 			}
 		}
 
-		db.DeleteDocument(id)
+		db.deleteDocument(id)
 	}
 
 	if db.free.Len() > 0 {
