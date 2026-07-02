@@ -49,7 +49,7 @@ func CachingParser[T any](parser TagParser[T]) TagParser[T] {
 		t, err := parser(s)
 		if err != nil {
 			var zero T
-			return zero, err
+			return zero, fmt.Errorf("failed to parse tag %q: %w", s, err)
 		}
 
 		cache[s] = t
@@ -65,7 +65,7 @@ type Marshaler[T any] struct {
 func (m Marshaler[T]) Marshal(w Writer[T], value any) error {
 	write, err := w.WriteValue(value)
 	if !write || err != nil {
-		return err
+		return fmt.Errorf("failed to write value %v: %w", value, err)
 	}
 
 	v := reflect.ValueOf(value)
@@ -78,7 +78,7 @@ func (m Marshaler[T]) Marshal(w Writer[T], value any) error {
 		v = v.Elem()
 
 		if write, err = w.WriteValue(v.Interface()); !write || err != nil {
-			return err
+			return fmt.Errorf("failed to write value %v: %w", v.Interface(), err)
 		}
 	}
 
@@ -162,9 +162,22 @@ func (m Marshaler[T]) marshalField(w Writer[T], name string, tag T, value reflec
 }
 
 func (m Marshaler[T]) marshalStruct(w Writer[T], v reflect.Value) error {
-	t := v.Type()
+	startedObject, err := m.marshalStructFields(w, false, v)
+	if err != nil {
+		return err
+	}
 
-	startedObject := false
+	if startedObject {
+		if err := w.WriteEndObject(); err != nil {
+			return fmt.Errorf("failed to write end object: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (m Marshaler[T]) marshalStructFields(w Writer[T], startedObject bool, v reflect.Value) (bool, error) {
+	t := v.Type()
 
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
@@ -182,43 +195,59 @@ func (m Marshaler[T]) marshalStruct(w Writer[T], v reflect.Value) error {
 		}
 
 		if err != nil {
-			return err
+			return startedObject, err
+		}
+
+		if field.Anonymous {
+			anonValue := fieldValue
+
+			for anonValue.Kind() == reflect.Pointer {
+				if anonValue.IsNil() {
+					break
+				}
+
+				anonValue = anonValue.Elem()
+			}
+
+			if anonValue.Kind() == reflect.Struct {
+				if started, err := m.marshalStructFields(w, startedObject, anonValue); err != nil {
+					return startedObject || started, err
+				} else if started {
+					startedObject = true
+				}
+
+				continue
+			}
 		}
 
 		if !startedObject {
 			if err := w.WriteStartObject(); err != nil {
-				return err
+				return false, fmt.Errorf("failed to write start object: %w", err)
 			}
 			startedObject = true
 		}
 
 		if err := m.marshalField(w, field.Name, parsed, fieldValue); err != nil {
-			return err
+			return startedObject, fmt.Errorf("failed to marshal field %q: %w", field.Name, err)
 		}
 	}
 
-	if startedObject {
-		if err := w.WriteEndObject(); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return startedObject, nil
 }
 
 func (m Marshaler[T]) marshalSlice(w Writer[T], v reflect.Value) error {
 	if err := w.WriteStartArray(); err != nil {
-		return err
+		return fmt.Errorf("failed to write start array: %w", err)
 	}
 
 	for i := 0; i < v.Len(); i++ {
 		if err := m.Marshal(w, v.Index(i).Interface()); err != nil {
-			return err
+			return fmt.Errorf("failed to marshal slice element at index %d: %w", i, err)
 		}
 	}
 
 	if err := w.WriteEndArray(); err != nil {
-		return err
+		return fmt.Errorf("failed to write end array: %w", err)
 	}
 
 	return nil
@@ -226,7 +255,7 @@ func (m Marshaler[T]) marshalSlice(w Writer[T], v reflect.Value) error {
 
 func (m Marshaler[T]) marshalMap(w Writer[T], v reflect.Value) error {
 	if err := w.WriteStartObject(); err != nil {
-		return err
+		return fmt.Errorf("failed to write start object: %w", err)
 	}
 
 	var emptyTag T
@@ -235,18 +264,18 @@ func (m Marshaler[T]) marshalMap(w Writer[T], v reflect.Value) error {
 		value := v.MapIndex(key)
 
 		if write, err := w.WriteField(key.String(), value.Interface(), emptyTag); err != nil {
-			return err
+			return fmt.Errorf("failed to write field %q: %w", key.String(), err)
 		} else if !write {
 			continue
 		}
 
 		if err := m.marshalValue(w, value); err != nil {
-			return err
+			return fmt.Errorf("failed to marshal map value for key %q: %w", key.String(), err)
 		}
 	}
 
 	if err := w.WriteEndObject(); err != nil {
-		return err
+		return fmt.Errorf("failed to write end map object: %w", err)
 	}
 
 	return nil

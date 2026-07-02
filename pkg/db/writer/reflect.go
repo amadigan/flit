@@ -2,6 +2,7 @@ package writer
 
 import (
 	"encoding"
+	"reflect"
 	"slices"
 
 	"github.com/amadigan/flit/pkg/db"
@@ -326,6 +327,47 @@ func (w *documentEncoder) WriteField(name string, value any, tag string) (bool, 
 
 	if zeroable, ok := value.(zeroable); ok {
 		if zeroable.IsZero() {
+			return false, nil
+		}
+	}
+
+	// check for zero values of primitive types
+	if value == nil {
+		return false, nil
+	}
+
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Bool:
+		if !v.Bool() {
+			return false, nil
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if v.Int() == 0 {
+			return false, nil
+		}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if v.Uint() == 0 {
+			return false, nil
+		}
+	case reflect.Float32, reflect.Float64:
+		if v.Float() == 0 {
+			return false, nil
+		}
+	case reflect.String:
+		if v.Len() == 0 {
+			return false, nil
+		}
+	case reflect.Slice, reflect.Map:
+		if v.Len() == 0 {
+			return false, nil
+		}
+	case reflect.Pointer:
+		if v.IsNil() {
+			return false, nil
+		}
+	case reflect.Interface:
+		if v.IsNil() {
 			return false, nil
 		}
 	}

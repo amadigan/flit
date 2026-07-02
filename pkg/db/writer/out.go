@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"log"
 	"math"
 
 	"github.com/amadigan/flit/pkg/db"
@@ -52,7 +51,7 @@ func BuildObject(keys map[string]uint8, fields []Field) ([][]byte, int, error) {
 			return nil, 0, fmt.Errorf("field name %q exceeds maximum length of %d", field.name, MaxNameLength)
 		} else {
 			nameLen := len(field.name)
-			log.Printf("writing field %q with name length %d and content length %d", field.name, nameLen, field.len)
+			// log.Printf("writing field %q with name length %d and content length %d", field.name, nameLen, field.len)
 			if nameLen > 0x3F {
 				hdrWriter.WriteByte(0x40 | uint8(nameLen>>8))
 				hdrWriter.WriteByte(uint8(nameLen & 0xFF))
