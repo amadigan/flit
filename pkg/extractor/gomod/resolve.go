@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"io"
 	"os"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -84,16 +85,11 @@ func OpenModuleSource(platformTable PlatformTable, mod ResolvedModule) (*ModuleS
 
 	for _, entry := range zr.File {
 		if after, ok := strings.CutPrefix(entry.Name, ms.prefix); ok {
-			path := after
-			name := path
-			dir := false
-			if idx := strings.LastIndex(path, "/"); idx != -1 {
-				name = path[idx+1:]
-				dir = true
-			}
-			ms.entries[path] = ModuleFileEntry{
+			entryPath, dir := strings.CutSuffix(after, "/")
+			name := path.Base(entryPath)
+			ms.entries[entryPath] = ModuleFileEntry{
 				entry: entry,
-				path:  path,
+				path:  entryPath,
 				name:  name,
 				dir:   dir,
 			}

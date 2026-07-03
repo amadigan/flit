@@ -51,7 +51,7 @@ func (c *Context) GoDoc(ms *ModuleSource, srcChan <-chan extractor.Document, out
 		}
 
 		dir := path.Dir(srcdoc.Path)
-		packages[dir] = append(packages[dir], sourceFile{path: name, platforms: platforms})
+		packages[dir] = append(packages[dir], sourceFile{path: srcdoc.Path, platforms: platforms})
 	}
 
 	for dir, sources := range packages {
