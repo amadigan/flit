@@ -62,14 +62,12 @@ func main() {
 	util.Distribute(fileSink, fileXfer, fileDoc)
 
 	sourceChan <- extractor.ExtractStream{
-		RootId: modId,
 		Source: fileXfer,
 	}
 
 	docChan := make(chan extractor.Document, 16)
 
 	sourceChan <- extractor.ExtractStream{
-		RootId: modId,
 		Source: docChan,
 	}
 

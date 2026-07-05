@@ -100,41 +100,35 @@ func (m Marshaler[T]) marshalValue(w Writer[T], v reflect.Value) error {
 		return m.marshalValue(w, v.Elem())
 	}
 
-	value := v.Interface()
-
 	switch v.Kind() {
 	case reflect.Bool:
-		return w.WriteBool(value.(bool))
+		return w.WriteBool(v.Bool())
 	case reflect.Int8:
-		return w.WriteInt8(value.(int8))
+		return w.WriteInt8(int8(v.Int()))
 	case reflect.Int16:
-		return w.WriteInt16(value.(int16))
+		return w.WriteInt16(int16(v.Int()))
 	case reflect.Int32:
-		return w.WriteInt32(value.(int32))
+		return w.WriteInt32(int32(v.Int()))
 	case reflect.Int64:
-		return w.WriteInt64(value.(int64))
+		return w.WriteInt64(v.Int())
 	case reflect.Int:
-		return w.WriteInt64(int64(value.(int)))
+		return w.WriteInt64(v.Int())
 	case reflect.Uint8:
-		return w.WriteUint8(value.(uint8))
+		return w.WriteUint8(uint8(v.Uint()))
 	case reflect.Uint16:
-		return w.WriteUint16(value.(uint16))
+		return w.WriteUint16(uint16(v.Uint()))
 	case reflect.Uint32:
-		return w.WriteUint32(value.(uint32))
+		return w.WriteUint32(uint32(v.Uint()))
 	case reflect.Uint64:
-		return w.WriteUint64(value.(uint64))
+		return w.WriteUint64(v.Uint())
 	case reflect.Uint:
-		return w.WriteUint64(uint64(value.(uint)))
+		return w.WriteUint64(v.Uint())
 	case reflect.Float32:
-		return w.WriteFloat32(value.(float32))
+		return w.WriteFloat32(float32(v.Float()))
 	case reflect.Float64:
-		return w.WriteFloat64(value.(float64))
+		return w.WriteFloat64(v.Float())
 	case reflect.String:
-		return w.WriteString(value.(string))
-	default:
-		if bytes, ok := value.([]byte); ok {
-			return w.WriteBytes(bytes)
-		}
+		return w.WriteString(v.String())
 	}
 
 	return fmt.Errorf("unsupported type: %s", v.Type().String())

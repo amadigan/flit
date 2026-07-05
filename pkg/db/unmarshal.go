@@ -2,7 +2,6 @@ package db
 
 import (
 	"fmt"
-	"log"
 	"reflect"
 	"strings"
 )
@@ -137,7 +136,7 @@ func Unmarshal(cursor ValueCursor, headers []ValueHeader, v any, extraFields ...
 					return fmt.Errorf("failed to unmarshal array for field %q: %w", field.Name, err)
 				}
 
-				fieldValue.Set(reflect.ValueOf(arr).Elem())
+				fieldValue.Set(arr.Elem())
 			default:
 				parser, err := cursor.Scalar(header.index)
 				if err != nil {
@@ -187,21 +186,19 @@ func unmarshalToMap(cursor ValueCursor, headers []ValueHeader, v reflect.Value) 
 
 			obj := reflect.New(v.Type().Elem()).Interface()
 			if err := Unmarshal(objCursor, subheaders, obj); err != nil {
-				return err
+				return fmt.Errorf("failed to unmarshal object for key %q to type %s: %w", name, v.Type().String(), err)
 			}
-
-			log.Printf("unmarshaled object for key %q: %+v", name, obj)
 
 			v.SetMapIndex(reflect.ValueOf(name), reflect.ValueOf(obj).Elem())
 		case TypeArray:
 			arrHeaders, err := cursor.ObjectHeader(i)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to get array header for key %q: %w", name, err)
 			}
 
 			arrCursor, err := cursor.Object(i)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to get array cursor for key %q: %w", name, err)
 			}
 
 			elemType := v.Type().Elem()

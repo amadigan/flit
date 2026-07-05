@@ -59,7 +59,7 @@ func main() {
 
 	sourceChan := make(chan extractor.ExtractStream, 16)
 
-	exwriter := writer.NewExtractDBWriter(rdb, writer.DefaultDBInfo(), sourceChan, errChan)
+	schema := gomod.GetGoSchema()
 
 	root := extractor.RootDocument{
 		DocumentFields: extractor.DocumentFields{
@@ -69,11 +69,11 @@ func main() {
 		SourceType: "go",
 		Version:    mod.Version,
 		Code:       "go",
+		Types:      schema.Types,
+		Fields:     schema.Fields,
 	}
 
-	if err := exwriter.Open(root); err != nil {
-		panic(err)
-	}
+	exwriter := writer.NewExtractDBWriter(rdb, root, sourceChan, errChan)
 
 	fileSink := make(chan extractor.Document, 16)
 	fileXfer := make(chan extractor.Document, 16)
@@ -82,14 +82,12 @@ func main() {
 	util.Distribute(fileSink, fileXfer, fileDoc)
 
 	sourceChan <- extractor.ExtractStream{
-		RootId: modId,
 		Source: fileXfer,
 	}
 
 	docChan := make(chan extractor.Document, 16)
 
 	sourceChan <- extractor.ExtractStream{
-		RootId: modId,
 		Source: docChan,
 	}
 

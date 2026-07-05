@@ -35,6 +35,16 @@
 			]
 		},
 		{
+			"name": "tree",
+			"type": "go",
+			"request": "launch",
+			"mode": "auto",
+			"program": "${workspaceFolder}/tools/tree",
+			"args": [
+				"${workspaceFolder}/local/uuid"
+			]
+		},
+		{
 			"name": "goartifact",
 			"type": "go",
 			"request": "launch",

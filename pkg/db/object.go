@@ -162,8 +162,6 @@ func parseObjectHeader(r io.Reader) ([]ValueHeader, int, error) {
 			read += c
 		}
 
-		orig := buf[0]
-
 		if buf[0] == EndOfObject {
 			break
 		}
@@ -205,7 +203,6 @@ func parseObjectHeader(r io.Reader) ([]ValueHeader, int, error) {
 		fh.off = uint32(offset)
 		offset += int(fh.len)
 
-		log.Printf("Parsed field header: predefined=%d, nameOff=%d, nameLen=%d, typ=%v, off=%d, len=%d for input byte 0x%02X", fh.predefined, fh.nameOff, fh.nameLen, fh.typ, fh.off, fh.len, orig)
 		headers = append(headers, fh)
 	}
 	return headers, read, nil

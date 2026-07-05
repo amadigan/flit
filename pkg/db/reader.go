@@ -3,6 +3,8 @@ package db
 import (
 	"errors"
 	"io"
+
+	"github.com/amadigan/flit/pkg/schema"
 )
 
 const BuiltinKeys = 2
@@ -11,8 +13,6 @@ const KeyBuiltinEmptyKey = 1
 
 var ErrInvalidDocumentId = errors.New("invalid document id")
 var ErrDocumentNotFound = errors.New("document not found")
-
-type DocumentId int32
 
 type DBInfo struct {
 	Keys  []string
@@ -70,7 +70,7 @@ func (vh ValueHeader) Predefined() uint8 {
 
 type DocumentCursor interface {
 	io.Closer
-	Next(DocumentId) ([]ValueHeader, error)
+	Next(schema.DocumentId) ([]ValueHeader, error)
 	Open() (ValueCursor, error)
 }
 

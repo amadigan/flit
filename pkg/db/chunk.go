@@ -1,6 +1,10 @@
 package db
 
-import "io"
+import (
+	"io"
+
+	"github.com/amadigan/flit/pkg/schema"
+)
 
 type ChunkHeader struct {
 	DatabaseId []byte
@@ -28,7 +32,7 @@ func (cr *ChunkReader) Close() error {
 	return cr.reader.Close()
 }
 
-func (cr *ChunkReader) Next(docId DocumentId) ([]ValueHeader, error) {
+func (cr *ChunkReader) Next(docId schema.DocumentId) ([]ValueHeader, error) {
 	if int(docId) < 0 || int(docId) >= len(cr.chunkMap.docs) {
 		return nil, ErrInvalidDocumentId
 	}

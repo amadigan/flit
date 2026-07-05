@@ -4,6 +4,7 @@ import (
 	"encoding"
 	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/amadigan/flit/pkg/db"
 	"github.com/amadigan/flit/pkg/marshal"
@@ -372,7 +373,7 @@ func (w *documentEncoder) WriteField(name string, value any, tag string) (bool, 
 		}
 	}
 
-	w.fieldName = name
+	w.fieldName = strings.ToLower(name)
 
 	if tag != "" {
 		w.fieldName = tag

@@ -3,55 +3,46 @@ package doctree
 import (
 	"fmt"
 	"slices"
+	"strings"
 
-	"github.com/amadigan/flit/pkg/db"
+	"github.com/amadigan/flit/pkg/schema"
 )
 
-type node struct {
-	symbol   symbol
-	children []*node
-	contains []*node
+type Node struct {
+	symbol   Symbol
+	children []*Node
+	contains []*Node
 	id       string
 }
 
-type symbol struct {
-	str   string
-	num   int64
-	order int64
+type Symbol struct {
+	Name  string
+	Type  string
+	Order int64
 }
 
-func (s symbol) String() string {
-	if s.str != "" {
-		if s.order != 0 {
-			return fmt.Sprintf("%s#%d", s.str, s.order)
-		}
-		return s.str
+func (s Symbol) String() string {
+	if s.Order != 0 {
+		return fmt.Sprintf("%s#%d", s.Name, s.Order)
 	}
 
-	if s.order != 0 {
-		if s.num != 0 {
-			return fmt.Sprintf("%d#%d", s.num, s.order)
-		}
-		return fmt.Sprintf("#%d", s.order)
-	}
-
-	return fmt.Sprintf("%d", s.num)
+	return s.Name
 }
 
-func (s symbol) Equal(other symbol) bool {
-	return s.str == other.str && s.num == other.num && s.order == other.order
+func (s Symbol) Equal(other Symbol) bool {
+	return s.Name == other.Name && s.Type == other.Type && s.Order == other.Order
 }
 
 type Tree struct {
-	children []*node
+	children []*Node
 }
 
-func (t *Tree) AddChild(symbols []symbol, id string) {
+func (t *Tree) AddChild(symbols []Symbol, id string) {
 	if len(symbols) == 0 {
 		panic("cannot add empty symbol list to tree")
 	}
 
-	var child *node
+	var child *Node
 
 	child, t.children = requireChild(t.children, symbols[0])
 
@@ -62,12 +53,12 @@ func (t *Tree) AddChild(symbols []symbol, id string) {
 	child.id = id
 }
 
-func (t *Tree) AddContainee(symbols []symbol, id string) {
+func (t *Tree) AddContainee(symbols []Symbol, id string) {
 	if len(symbols) == 0 {
 		panic("cannot add empty symbol list to tree")
 	}
 
-	var child *node
+	var child *Node
 
 	child, t.children = requireChild(t.children, symbols[0])
 
@@ -76,9 +67,9 @@ func (t *Tree) AddContainee(symbols []symbol, id string) {
 		for _, c := range child.contains {
 			if c.symbol.Equal(sym) {
 				child = c
+				contains = true
+				break
 			}
-			contains = true
-			break
 		}
 
 		if !contains {
@@ -99,58 +90,105 @@ func (t *Tree) AddContainee(symbols []symbol, id string) {
 	child.id = id
 }
 
-func requireChild(children []*node, sym symbol) (*node, []*node) {
+func (t *Tree) FindNode(symbols []Symbol) *Node {
+	if len(symbols) == 0 {
+		return nil
+	}
+
+	var child *Node
+
+	for _, c := range t.children {
+		if c.symbol.Equal(symbols[0]) {
+			child = c
+			break
+		}
+	}
+
+	if child == nil {
+		return nil
+	}
+
+	for _, sym := range symbols[1:] {
+		found := false
+		for _, c := range child.contains {
+			if c.symbol.Equal(sym) {
+				child = c
+				found = true
+				break
+			}
+		}
+
+		for _, c := range child.children {
+			if c.symbol.Equal(sym) {
+				child = c
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			return nil
+		}
+	}
+
+	return child
+}
+
+func requireChild(children []*Node, sym Symbol) (*Node, []*Node) {
 	for _, child := range children {
 		if child.symbol.Equal(sym) {
 			return child, children
 		}
 	}
 
-	child := &node{symbol: sym}
+	child := &Node{symbol: sym}
 	children = append(children, child)
 	return child, children
 }
 
-func (n *node) sort() {
-	slices.SortFunc(n.children, func(a, b *node) int {
-		if a.symbol.order != b.symbol.order {
-			if a.symbol.order < b.symbol.order {
-				return -1
-			}
-			return 1
+func compareNodes(a, b *Node) int {
+	if a.symbol.Order != b.symbol.Order {
+		if a.symbol.Order < b.symbol.Order {
+			return -1
 		}
+		return 1
+	}
 
-		if a.symbol.str != b.symbol.str {
-			if a.symbol.str < b.symbol.str {
-				return -1
-			}
-			return 1
+	if a.symbol.Name != b.symbol.Name {
+		if a.symbol.Name < b.symbol.Name {
+			return -1
 		}
+		return 1
+	}
 
-		if a.symbol.num != b.symbol.num {
-			if a.symbol.num < b.symbol.num {
-				return -1
-			}
-			return 1
-		}
+	return 0
+}
 
-		return 0
-	})
+func (n *Node) sort(sorter schemaSorter) {
+	slices.SortFunc(n.contains, sorter.getComparator(n.symbol.Type).compareContains)
+
+	for _, child := range n.contains {
+		child.sort(sorter)
+	}
+
+	slices.SortFunc(n.children, sorter.getComparator(n.symbol.Type).compareChildren)
 
 	for _, child := range n.children {
-		child.sort()
+		child.sort(sorter)
 	}
 }
 
-func (t *Tree) Sort() {
+func (t *Tree) Sort(schema schema.Schema) {
+	schemaSorter := newSchemaSorter(schema)
+
 	for _, child := range t.children {
-		child.sort()
+		child.sort(schemaSorter)
 	}
 }
 
 func (t *Tree) IdTable() *IdTable {
 	table := &IdTable{
-		strToId: make(map[string]db.DocumentId),
+		strToId: make(map[string]schema.DocumentId),
 	}
 
 	for _, child := range t.children {
@@ -160,23 +198,22 @@ func (t *Tree) IdTable() *IdTable {
 	return table
 }
 
-func (n *node) collectContaineeIds(table *IdTable) {
+func (n *Node) collectContaineeIds(table *IdTable) {
 	if len(n.contains) == 0 {
 		return
 	}
 
-	if n.id != "" {
-		table.Add(n.id)
-	}
-
 	for _, child := range n.contains {
+		if child.id != "" {
+			table.Add(child)
+		}
 		child.collectContaineeIds(table)
 	}
 }
 
-func (n *node) collectChildIds(table *IdTable) {
+func (n *Node) collectChildIds(table *IdTable) {
 	if n.id != "" {
-		table.Add(n.id)
+		table.Add(n)
 	}
 
 	n.collectContaineeIds(table)
@@ -186,39 +223,231 @@ func (n *node) collectChildIds(table *IdTable) {
 	}
 }
 
-type IdTable struct {
-	strToId map[string]db.DocumentId
-	idToStr []string
+func (t *Tree) String() string {
+	var builder strings.Builder
+
+	node := &Node{symbol: Symbol{Name: "root"}, children: t.children}
+
+	for len(node.children) == 1 && len(node.contains) == 0 {
+		node = node.children[0]
+	}
+
+	builder.WriteString(node.symbol.String())
+	if node.id != "" {
+		fmt.Fprintf(&builder, " (id: %s, type: %s)", node.id, node.symbol.Type)
+	}
+	builder.WriteString("\n")
+
+	for _, child := range node.contains {
+		child.writeString(&builder, true, 0)
+	}
+
+	for _, child := range node.children {
+		child.writeString(&builder, false, 0)
+	}
+
+	return builder.String()
 }
 
-func (t *IdTable) Add(id string) db.DocumentId {
-	if _, exists := t.strToId[id]; exists {
-		return t.strToId[id]
+func (n *Node) writeString(builder *strings.Builder, contained bool, depth int) {
+	builder.WriteString(strings.Repeat("  ", depth))
+	if contained {
+		builder.WriteString("-> ")
+	} else {
+		builder.WriteString("- ")
+	}
+	builder.WriteString(n.symbol.String())
+	if n.id != "" {
+		fmt.Fprintf(builder, " (id: %s, type: %s)", n.id, n.symbol.Type)
+	}
+	builder.WriteString("\n")
+
+	for _, child := range n.contains {
+		child.writeString(builder, true, depth+1)
 	}
 
-	t.idToStr = append(t.idToStr, id)
-	seq := db.DocumentId(len(t.idToStr))
+	for _, child := range n.children {
+		child.writeString(builder, false, depth+1)
+	}
+}
+
+type IdTable struct {
+	strToId  map[string]schema.DocumentId
+	idToNode []*Node
+}
+
+func (t *IdTable) Add(node *Node) schema.DocumentId {
+	if _, exists := t.strToId[node.id]; exists {
+		return t.strToId[node.id]
+	}
+
+	t.idToNode = append(t.idToNode, node)
+	seq := schema.DocumentId(len(t.idToNode))
 	if t.strToId == nil {
-		t.strToId = make(map[string]db.DocumentId)
+		t.strToId = make(map[string]schema.DocumentId)
 	}
 
-	t.strToId[id] = seq
+	t.strToId[node.id] = seq
 	return seq
 }
 
-func (t *IdTable) Get(id string) (db.DocumentId, bool) {
+func (t *IdTable) Get(id string) (schema.DocumentId, bool) {
 	seq, ok := t.strToId[id]
 	return seq, ok
 }
 
-func (t *IdTable) GetStr(seq db.DocumentId) (string, bool) {
+func (t *IdTable) GetStr(seq schema.DocumentId) (string, bool) {
 	point := int(seq) - 1
-	if point < 0 || point >= len(t.idToStr) {
+	if point < 0 || point >= len(t.idToNode) {
 		return "", false
 	}
-	return t.idToStr[point], true
+	return t.idToNode[point].id, true
+}
+
+func (t *IdTable) GetNode(seq schema.DocumentId) (*Node, bool) {
+	point := int(seq) - 1
+	if point < 0 || point >= len(t.idToNode) {
+		return nil, false
+	}
+	return t.idToNode[point], true
+}
+
+func (t *IdTable) GetNodeById(id string) (*Node, bool) {
+	seq, ok := t.strToId[id]
+	if !ok {
+		return nil, false
+	}
+	return t.GetNode(seq)
 }
 
 func (t *IdTable) Len() int {
-	return len(t.idToStr)
+	return len(t.idToNode)
+}
+
+func (t *IdTable) MaxId() schema.DocumentId {
+	return schema.DocumentId(len(t.idToNode))
+}
+
+type schemaSorter struct {
+	children map[string]map[string]int
+	contains map[string]map[string]int
+}
+
+func newSchemaSorter(schema schema.Schema) schemaSorter {
+	children := make(map[string]map[string]int)
+	contains := make(map[string]map[string]int)
+
+	for _, typ := range schema.Types {
+		containOrder := make(map[string]int)
+		childOrder := make(map[string]int)
+		children[typ.Name] = childOrder
+		contains[typ.Name] = containOrder
+
+		for i, contain := range typ.ContainOrder {
+			for _, name := range contain {
+				containOrder[name] = i
+			}
+		}
+
+		for i, child := range typ.ChildOrder {
+			for _, name := range child {
+				if _, exists := containOrder[name]; !exists {
+					containOrder[name] = len(typ.ContainOrder) + i
+				}
+
+				childOrder[name] = i
+			}
+		}
+	}
+
+	return schemaSorter{
+		children: children,
+		contains: contains,
+	}
+}
+
+type nodeComparator struct {
+	contains map[string]int
+	children map[string]int
+}
+
+func (c nodeComparator) compareContains(a, b *Node) int {
+	aOrder, aExists := c.contains[a.symbol.Type]
+	bOrder, bExists := c.contains[b.symbol.Type]
+
+	if !aExists {
+		aOrder = len(c.contains)
+	}
+
+	if !bExists {
+		bOrder = len(c.contains)
+	}
+
+	if aOrder != bOrder {
+		if aOrder < bOrder {
+			return -1
+		}
+		return 1
+	}
+
+	return compareNodes(a, b)
+}
+
+func (c nodeComparator) compareChildren(a, b *Node) int {
+	aOrder, aExists := c.children[a.symbol.Type]
+	bOrder, bExists := c.children[b.symbol.Type]
+
+	if !aExists {
+		aOrder = len(c.children)
+	}
+
+	if !bExists {
+		bOrder = len(c.children)
+	}
+
+	if aOrder != bOrder {
+		if aOrder < bOrder {
+			return -1
+		}
+		return 1
+	}
+
+	return compareNodes(a, b)
+}
+
+func (s schemaSorter) getComparator(typ string) nodeComparator {
+	return nodeComparator{
+		contains: s.contains[typ],
+		children: s.children[typ],
+	}
+}
+
+func (n Node) Id() string {
+	return n.id
+}
+
+func (n Node) Symbol() Symbol {
+	return n.symbol
+}
+
+func (n Node) ChildrenCount() int {
+	return len(n.children)
+}
+
+func (n Node) ContainsCount() int {
+	return len(n.contains)
+}
+
+func (n Node) Child(index int) *Node {
+	if index < 0 || index >= len(n.children) {
+		return nil
+	}
+	return n.children[index]
+}
+
+func (n Node) Containee(index int) *Node {
+	if index < 0 || index >= len(n.contains) {
+		return nil
+	}
+	return n.contains[index]
 }

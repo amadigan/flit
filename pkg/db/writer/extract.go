@@ -1,6 +1,7 @@
 package writer
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/amadigan/flit/pkg/db"
@@ -9,9 +10,11 @@ import (
 
 type ExtractDBWriter struct {
 	db      *ReadWriteDB
-	ends    map[string]extractor.EndDocument
+	dbinfo  *db.DBInfo
+	root    extractor.RootDocument
+	end     extractor.EndDocument
 	keymap  map[string]uint8
-	wgs     map[string]*sync.WaitGroup
+	wg      sync.WaitGroup
 	errChan chan<- extractor.WriterError
 	done    chan struct{}
 	mutex   sync.RWMutex
@@ -34,12 +37,39 @@ func DefaultDBInfo() *db.DBInfo {
 	}
 }
 
-func NewExtractDBWriter(db *ReadWriteDB, dbinfo *db.DBInfo, source <-chan extractor.ExtractStream, errChan chan<- extractor.WriterError) *ExtractDBWriter {
+func BuildDBInfo(root extractor.RootDocument) *db.DBInfo {
+	keys := []string{"id", "type", "order", "parent", "container", "sourceId", "line", "version",
+		"lang", "code", "content", "endLine", "endColumn", "offset", "length"}
+
+	keySet := make(map[string]struct{})
+	for _, key := range keys {
+		keySet[key] = struct{}{}
+	}
+
+	for field := range root.Fields {
+		field = strings.ToLower(field)
+		if _, exists := keySet[field]; !exists {
+			keys = append(keys, field)
+			keySet[field] = struct{}{}
+		}
+	}
+
+	return &db.DBInfo{
+		Keys:  keys,
+		IdKey: "id",
+	}
+}
+
+func NewExtractDBWriter(db *ReadWriteDB, root extractor.RootDocument, source <-chan extractor.ExtractStream, errChan chan<- extractor.WriterError) *ExtractDBWriter {
 	sink := make(chan sinkDocument, 16)
+
+	dbinfo := DefaultDBInfo()
+
 	writer := &ExtractDBWriter{
 		db:      db,
+		dbinfo:  dbinfo,
+		root:    root,
 		keymap:  BuildKeyMap(dbinfo.Keys),
-		wgs:     make(map[string]*sync.WaitGroup),
 		errChan: errChan,
 		sink:    sink,
 		done:    make(chan struct{}),
@@ -47,31 +77,19 @@ func NewExtractDBWriter(db *ReadWriteDB, dbinfo *db.DBInfo, source <-chan extrac
 
 	go func() {
 		for stream := range source {
-			writer.mutex.RLock()
-			wg, ok := writer.wgs[stream.RootId]
-			writer.mutex.RUnlock()
 
-			if !ok {
-				writer.errChan <- extractor.WriterError{
-					RootId: stream.RootId,
-					Cause:  &extractor.RootClosedError{RootId: stream.RootId},
-				}
-				continue
-			}
-
-			wg.Add(1)
-			go func(rootId string, source <-chan extractor.Document) {
-				defer wg.Done()
+			writer.wg.Add(1)
+			go func(source <-chan extractor.Document) {
+				defer writer.wg.Done()
 				for doc := range source {
-					if err := writer.marshal(rootId, doc); err != nil {
+					if err := writer.marshal(doc); err != nil {
 						writer.errChan <- extractor.WriterError{
-							RootId:   rootId,
 							Document: doc,
 							Cause:    err,
 						}
 					}
 				}
-			}(stream.RootId, stream.Source)
+			}(stream.Source)
 		}
 	}()
 
@@ -81,7 +99,6 @@ func NewExtractDBWriter(db *ReadWriteDB, dbinfo *db.DBInfo, source <-chan extrac
 		for doc := range sink {
 			if err := writer.db.WriteDocumentParts(doc.id, doc.data, doc.length); err != nil {
 				writer.errChan <- extractor.WriterError{
-					RootId:   doc.root,
 					Document: doc.doc,
 					Cause:    err,
 				}
@@ -92,7 +109,7 @@ func NewExtractDBWriter(db *ReadWriteDB, dbinfo *db.DBInfo, source <-chan extrac
 	return writer
 }
 
-func (w *ExtractDBWriter) marshal(root string, doc extractor.Document) error {
+func (w *ExtractDBWriter) marshal(doc extractor.Document) error {
 	fields, err := MarshalDocument(w.keymap, doc)
 	if err != nil {
 		return err
@@ -105,7 +122,6 @@ func (w *ExtractDBWriter) marshal(root string, doc extractor.Document) error {
 
 	w.sink <- sinkDocument{
 		id:     doc.DocFields().Id,
-		root:   root,
 		data:   data,
 		doc:    doc,
 		length: length,
@@ -113,47 +129,12 @@ func (w *ExtractDBWriter) marshal(root string, doc extractor.Document) error {
 
 	return nil
 }
-
-func (w *ExtractDBWriter) Open(root extractor.RootDocument) error {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-
-	if _, ok := w.wgs[root.Id]; !ok {
-		w.wgs[root.Id] = &sync.WaitGroup{}
-	}
-
-	return w.marshal(root.Id, root)
-}
-
-func (w *ExtractDBWriter) WaitForRoot(rootId string) {
-	w.mutex.RLock()
-	wg, ok := w.wgs[rootId]
-	w.mutex.RUnlock()
-
-	if !ok {
-		return
-	}
-
-	wg.Wait()
-}
-
 func (w *ExtractDBWriter) CloseRoot(end extractor.EndDocument) error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
-	if wg, ok := w.wgs[end.Id]; !ok {
-		return &extractor.RootClosedError{RootId: end.Id}
-	} else {
-		wg.Wait()
-		delete(w.wgs, end.Id)
-	}
-
-	if w.ends == nil {
-		w.ends = make(map[string]extractor.EndDocument)
-	}
-
-	w.ends[end.Id] = end
-
+	w.wg.Wait()
+	w.end = end
 	return nil
 }
 
@@ -161,9 +142,7 @@ func (w *ExtractDBWriter) Close() error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
-	for _, wg := range w.wgs {
-		wg.Wait()
-	}
+	w.wg.Wait()
 	close(w.sink)
 	<-w.done
 

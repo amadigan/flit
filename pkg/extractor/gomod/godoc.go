@@ -209,9 +209,10 @@ func buildExampleDoc(pkg *doc.Package, parent string, fset *token.FileSet, fileP
 
 	doc := &Example{
 		DocumentFields: extractor.DocumentFields{
-			Id:     fmt.Sprintf("example:%s/%s", parent, nodeId(example.Code, fset)),
-			Type:   "example",
-			Parent: parent,
+			Id:        fmt.Sprintf("example:%s/%s", parent, nodeId(example.Code, fset)),
+			Type:      "example",
+			Parent:    parent,
+			Container: parent,
 		},
 		Suffix:    example.Suffix,
 		Output:    example.Output,
@@ -245,9 +246,10 @@ func crawlType(ms *ModuleSource, pkg *doc.Package, parent string, fset *token.Fi
 	if ok {
 		typeDoc := &TypeDocument{
 			DocumentFields: extractor.DocumentFields{
-				Id:     id,
-				Type:   "type",
-				Parent: parent,
+				Id:        id,
+				Type:      "type",
+				Parent:    parent,
+				Container: parent,
 			},
 			DefaultFields: DefaultFields{
 				Symbol: typ.Name,
@@ -336,9 +338,10 @@ func buildValueDoc(ms *ModuleSource, pkg *doc.Package, parent string, fset *toke
 
 	valueDoc := &ValueDocument{
 		DocumentFields: extractor.DocumentFields{
-			Id:     id,
-			Type:   string(typ),
-			Parent: parent,
+			Id:        id,
+			Type:      string(typ),
+			Parent:    parent,
+			Container: parent,
 		},
 		DefaultFields: DefaultFields{
 			Symbol: value.Names[0],
@@ -369,9 +372,10 @@ func crawlFunc(ms *ModuleSource, pkg *doc.Package, parent string, fset *token.Fi
 	if ok {
 		funcDoc := &FunctionDocument{
 			DocumentFields: extractor.DocumentFields{
-				Id:     id,
-				Type:   "func",
-				Parent: parent,
+				Id:        id,
+				Type:      "func",
+				Parent:    parent,
+				Container: parent,
 			},
 			DefaultFields: DefaultFields{
 				Symbol: fn.Name,

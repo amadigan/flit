@@ -7,7 +7,7 @@ type Document interface {
 }
 
 type DocumentFields struct {
-	Id        string `json:"id"`
+	Id        string `json:"id" bdoc:"-"`
 	Type      string `json:"type"`
 	Parent    string `json:"parent,omitempty"`
 	Container string `json:"container,omitempty"`
