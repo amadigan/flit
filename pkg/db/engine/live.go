@@ -69,11 +69,9 @@ func (e *LiveEngine) GetDocument(id schema.DocumentId, fieldFilter func(string, 
 		return Document{}, fmt.Errorf("document with ID %d not found", id)
 	}
 
-	doc := Document{
-		Id:     id,
-		Fields: make(map[string]Field),
-		Facets: make(map[string][]string),
-	}
+	doc, _ := e.LoadTreeFields(id)
+	doc.Fields = make(map[string]Field)
+	doc.Facets = make(map[string][]string)
 
 	reader := e.rdb.OpenDocument(str)
 	if reader == nil {
@@ -142,8 +140,73 @@ func (e *LiveEngine) GetDocument(id schema.DocumentId, fieldFilter func(string, 
 		}
 	}
 
-	// TODO use the doctree to populate descendant, containee, and child fields
-	// TODO fill in Code values where appropriate
+	// TODO fill in Code values where appropriate(?)
 
 	return doc, nil
+}
+
+// DOES NOT HANDLE PARENT
+func (e *LiveEngine) LoadTreeFields(id schema.DocumentId) (Document, bool) {
+	node, exists := e.idtable.GetNode(id)
+	if !exists {
+		return Document{}, false
+	}
+
+	doc := Document{
+		Id: id,
+	}
+
+	if container := node.Container(); container != nil {
+		doc.Container, _ = e.idtable.Get(container.Id())
+
+		for ; container != nil; container = container.Container() {
+			if container.Container() == nil {
+				doc.RootContainer, _ = e.idtable.Get(container.Id())
+			}
+		}
+	}
+
+	doc.LeafContainee = getLeafContaineeId(node, e.idtable)
+
+	doc.LastDescendant = getLastDescendantId(node, e.idtable)
+
+	if doc.LastDescendant != 0 {
+		doc.FirstChild, _ = e.idtable.Get(node.Child(0).Id())
+		childCount := node.ChildrenCount()
+		doc.LastChild, _ = e.idtable.Get(node.Child(childCount - 1).Id())
+	}
+
+	return doc, true
+}
+
+func getLeafContaineeId(node *doctree.Node, idtable *doctree.IdTable) schema.DocumentId {
+	containees := node.ContainsCount()
+
+	if containees == 0 {
+		return 0
+	}
+
+	leafContainee := node.Containee(containees - 1)
+
+	for leafContainee.ContainsCount() > 0 {
+		leafContainee = leafContainee.Containee(leafContainee.ContainsCount() - 1)
+	}
+
+	id, _ := idtable.Get(leafContainee.Id())
+	return id
+}
+
+func getLastDescendantId(node *doctree.Node, idtable *doctree.IdTable) schema.DocumentId {
+	if node.ChildrenCount() == 0 {
+		return 0
+	}
+
+	lastChild := node.Child(node.ChildrenCount() - 1)
+
+	for lastChild.ChildrenCount() > 0 {
+		lastChild = lastChild.Child(lastChild.ChildrenCount() - 1)
+	}
+
+	id, _ := idtable.Get(lastChild.Id())
+	return id
 }

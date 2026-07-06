@@ -9,10 +9,11 @@ import (
 )
 
 type Node struct {
-	symbol   Symbol
-	children []*Node
-	contains []*Node
-	id       string
+	symbol    Symbol
+	children  []*Node
+	contains  []*Node
+	container *Node
+	id        string
 }
 
 type Symbol struct {
@@ -44,10 +45,10 @@ func (t *Tree) AddChild(symbols []Symbol, id string) {
 
 	var child *Node
 
-	child, t.children = requireChild(t.children, symbols[0])
+	child, t.children = requireChild(nil, t.children, symbols[0])
 
 	for _, sym := range symbols[1:] {
-		child, child.children = requireChild(child.children, sym)
+		child, child.children = requireChild(child, child.children, sym)
 	}
 
 	child.id = id
@@ -73,6 +74,7 @@ func (t *Tree) AddContainee(symbols []Symbol, id string) {
 		}
 
 		if !contains {
+			// add as a normal child, since this is not the leaf
 			child, child.children = requireChild(child.children, sym)
 		}
 	}
@@ -82,12 +84,16 @@ func (t *Tree) AddContainee(symbols []Symbol, id string) {
 			// Remove the leaf from children and add it to contains
 			child.children = append(child.children[:i], child.children[i+1:]...)
 			child.contains = append(child.contains, c)
-			break
+			c.container = child
+			c.id = id
+			return
 		}
 	}
 
+	container := child
 	child, child.contains = requireChild(child.contains, symbols[len(symbols)-1])
 	child.id = id
+	child.container = container
 }
 
 func (t *Tree) FindNode(symbols []Symbol) *Node {
@@ -450,4 +456,8 @@ func (n Node) Containee(index int) *Node {
 		return nil
 	}
 	return n.contains[index]
+}
+
+func (n Node) Container() *Node {
+	return n.container
 }
