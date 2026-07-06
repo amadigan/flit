@@ -45,10 +45,10 @@ func (t *Tree) AddChild(symbols []Symbol, id string) {
 
 	var child *Node
 
-	child, t.children = requireChild(nil, t.children, symbols[0])
+	child, t.children = requireChild(t.children, symbols[0])
 
 	for _, sym := range symbols[1:] {
-		child, child.children = requireChild(child, child.children, sym)
+		child, child.children = requireChild(child.children, sym)
 	}
 
 	child.id = id

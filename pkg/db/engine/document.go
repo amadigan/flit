@@ -17,6 +17,7 @@ type Document struct {
 	Type           string
 	Fields         map[string]Field
 	Facets         map[string][]string
+	Data           map[string]any
 }
 
 type Field struct {

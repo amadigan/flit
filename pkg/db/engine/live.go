@@ -63,7 +63,11 @@ func (e *LiveEngine) MaxDocumentId() schema.DocumentId {
 	return e.idtable.MaxId()
 }
 
-func (e *LiveEngine) GetDocument(id schema.DocumentId, fieldFilter func(string, schema.Field) bool) (Document, error) {
+func (e *LiveEngine) Cursor() (EngineCursor, error) {
+	return e, nil
+}
+
+func (e *LiveEngine) Document(id schema.DocumentId, fieldFilter FieldFilter) (Document, error) {
 	str, exists := e.idtable.GetStr(id)
 	if !exists {
 		return Document{}, fmt.Errorf("document with ID %d not found", id)
@@ -209,4 +213,90 @@ func getLastDescendantId(node *doctree.Node, idtable *doctree.IdTable) schema.Do
 
 	id, _ := idtable.Get(lastChild.Id())
 	return id
+}
+
+func (e *LiveEngine) Close() {
+	// does nothing
+}
+
+func (e *LiveEngine) Query(query Query) ([]Document, error) {
+	ctx := NewQueryContext(e, query)
+
+	var ids []schema.DocumentId
+	var extraData map[schema.DocumentId]map[string]any
+
+	for _, selector := range query.Selectors {
+		batch, batchExtraData, err := selector(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		ids = append(ids, batch...)
+		if batchExtraData != nil {
+			if extraData == nil {
+				extraData = batchExtraData
+			} else {
+				for id, data := range batchExtraData {
+					existingData, exists := extraData[id]
+					if !exists {
+						extraData[id] = data
+					} else {
+						for k, v := range data {
+							existingData[k] = v
+						}
+					}
+				}
+			}
+		}
+	}
+
+	ids = sortUnique(ids)
+
+	docs := make([]Document, 0, len(ids))
+
+	for _, id := range ids {
+		var doc Document
+		qdoc, exists := ctx.Documents[id]
+		if !exists || !qdoc.Complete {
+			fdoc, err := e.Document(id, func(name string, field schema.Field) bool {
+				if _, exists := ctx.FilterFields[name]; exists {
+					return true
+				}
+
+				if _, exists := ctx.ResultFields[name]; exists {
+					return true
+				}
+
+				return false
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			doc = fdoc
+		} else {
+			doc = qdoc.Document
+		}
+
+		doc.Data = extraData[id]
+
+		filtered := false
+
+		for _, filter := range ctx.Filters {
+			accept, err := filter.Filter(doc)
+			if err != nil {
+				return nil, err
+			}
+			if !accept {
+				filtered = true
+				break
+			}
+		}
+
+		if !filtered {
+			docs = append(docs, doc)
+		}
+	}
+
+	return docs, nil
 }
